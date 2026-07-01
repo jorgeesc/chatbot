@@ -1,8 +1,11 @@
 import requests
+import os
+from dotenv import load_dotenv
 
-TOKEN = "EAAMYPxJFu7cBRy3OTlsMQTvZB1DwuGGoeTnLJZARl1pD8dDJOdenvLHFqrgqQXxZC3BFlU9SiAUKGZA1dIRrSFusuYHZAI49eiymtuf1FNQRP63QyIn1ShAqy2c1fczyznkvP9fPJCcmm6wj5jK23hcvHEsV8ZB6sk7aPrUyn50xNEIN4ELbz1nTZC1YrUzhkQM0AZBQjhQTuYPf26H5si81ZCO4uo8Ik1apPpWERMORTxhl12dh3ZCWHShUSWbEZBtW0HQRTJE7lSneuukF8yUYrvkgSn2w6TgGHaS6wZDZD"
+load_dotenv()
 
-PHONE_NUMBER_ID = "1074228509117424"
+TOKEN = os.getenv("META_TOKEN")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 
 
 def send_message(phone, text):

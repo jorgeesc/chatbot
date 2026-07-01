@@ -21,7 +21,12 @@ from services.session_service import (
     reset_session
 )
 
-VERIFY_TOKEN = "MiToken123"
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 
 
 @app.route("/webhook", methods=["GET"])
