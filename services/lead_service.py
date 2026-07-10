@@ -46,6 +46,10 @@ def create_lead(
     ))
 
     conn.commit()
+    
+    lead_id = cursor.lastrowid
 
     cursor.close()
     conn.close()
+
+    return lead_id

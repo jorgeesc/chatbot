@@ -18,16 +18,24 @@ from services.session_service import (
     update_company_name,
     update_budget,
     update_comments,
+    update_step,
     reset_session
 )
 
+from urllib.parse import quote
+
 import os
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 
+
+# ==========================================================
+# VERIFICACIÓN DEL WEBHOOK
+# ==========================================================
 
 @app.route("/webhook", methods=["GET"])
 def verify():
@@ -41,6 +49,10 @@ def verify():
     return "Error", 403
 
 
+# ==========================================================
+# RECEPCIÓN DE MENSAJES
+# ==========================================================
+
 @app.route("/webhook", methods=["POST"])
 def receive():
 
@@ -50,6 +62,7 @@ def receive():
 
         value = data["entry"][0]["changes"][0]["value"]
 
+        # Ignorar eventos que no contienen mensajes
         if "messages" not in value:
             return "ok", 200
 
@@ -61,9 +74,9 @@ def receive():
         print(message_data)
         print("===================================")
 
-        # ==========================================
+        # ==================================================
         # MENSAJES DE TEXTO
-        # ==========================================
+        # ==================================================
 
         if message_data["type"] == "text":
 
@@ -71,7 +84,10 @@ def receive():
 
             session = get_session(phone)
 
-            # Primera vez
+            # ==================================================
+            # PRIMERA VEZ
+            # ==================================================
+
             if not session:
 
                 create_session(phone)
@@ -97,9 +113,9 @@ def receive():
 
             current_step = session["current_step"]
 
-            # ==========================
+            # ==================================================
             # NOMBRE
-            # ==========================
+            # ==================================================
 
             if current_step == "name":
 
@@ -107,14 +123,16 @@ def receive():
 
                 send_message(
                     phone,
-                    "📧 ¿Cuál es tu correo electrónico?\n\nSi no deseas compartirlo escribe NO"
+                    """📧 ¿Cuál es tu correo electrónico?
+
+Si no deseas compartirlo escribe NO"""
                 )
 
                 return "ok", 200
 
-            # ==========================
+            # ==================================================
             # EMAIL
-            # ==========================
+            # ==================================================
 
             elif current_step == "email":
 
@@ -127,14 +145,13 @@ def receive():
 
                 return "ok", 200
 
-            # ==========================
+            # ==================================================
             # CIUDAD
-            # ==========================
+            # ==================================================
+
             elif current_step == "city":
 
                 update_city(phone, text)
-
-                from services.session_service import update_step
 
                 update_step(phone, "company_name")
 
@@ -147,7 +164,11 @@ PARTICULAR"""
                 )
 
                 return "ok", 200
-            
+
+            # ==================================================
+            # NOMBRE DE LA EMPRESA DEL CLIENTE
+            # ==================================================
+
             elif current_step == "company_name":
 
                 update_company_name(phone, text)
@@ -155,6 +176,8 @@ PARTICULAR"""
                 send_message(
                     phone,
                     """💰 ¿Cuál es tu presupuesto aproximado?
+
+Escribe únicamente el número de una opción:
 
 1️⃣ Menos de $5,000
 
@@ -166,11 +189,45 @@ PARTICULAR"""
                 )
 
                 return "ok", 200
-            
-            
+
+            # ==================================================
+            # PRESUPUESTO
+            # ==================================================
+
             elif current_step == "budget":
 
-                update_budget(phone, text)
+                budget_options = {
+                    "1": "Menos de $5,000",
+                    "2": "$5,000 - $20,000",
+                    "3": "$20,000 - $50,000",
+                    "4": "Más de $50,000"
+                }
+
+                # Validar que únicamente escriba 1, 2, 3 o 4
+                if text not in budget_options:
+
+                    send_message(
+                        phone,
+                        """⚠️ Opción de presupuesto no válida.
+
+Por favor escribe únicamente el número de una opción:
+
+1️⃣ Menos de $5,000
+
+2️⃣ $5,000 - $20,000
+
+3️⃣ $20,000 - $50,000
+
+4️⃣ Más de $50,000"""
+                    )
+
+                    # No avanzamos de etapa
+                    return "ok", 200
+
+                # Convertir la opción en el rango real
+                budget = budget_options[text]
+
+                update_budget(phone, budget)
 
                 send_message(
                     phone,
@@ -185,21 +242,51 @@ o
 Quiero cotizar una campaña publicitaria."""
                 )
 
-                return "ok", 200 
+                return "ok", 200
 
+            # ==================================================
+            # COMENTARIOS / FINALIZAR LEAD
+            # ==================================================
 
             elif current_step == "comments":
 
                 update_comments(phone, text)
 
+                # Recuperar nuevamente la sesión actualizada
                 session = get_session(phone)
 
                 company_id = session["company_id"]
                 service_id = session["service_id"]
 
+                # ==================================================
+                # ASIGNAR VENDEDOR
+                # ==================================================
+
                 vendor = get_next_vendor(company_id)
 
-                create_lead(
+                if not vendor:
+
+                    print(
+                        f"No existen vendedores activos "
+                        f"para company_id={company_id}"
+                    )
+
+                    send_message(
+                        phone,
+                        """⚠️ Tu solicitud fue recibida, pero en este momento no pudimos asignar un asesor.
+
+Nuestro equipo dará seguimiento a tu solicitud."""
+                    )
+
+                    reset_session(phone)
+
+                    return "ok", 200
+
+                # ==================================================
+                # CREAR LEAD
+                # ==================================================
+
+                lead_id = create_lead(
                     phone,
                     session["customer_name"],
                     session["email"],
@@ -211,6 +298,10 @@ Quiero cotizar una campaña publicitaria."""
                     service_id,
                     vendor["id"]
                 )
+
+                # ==================================================
+                # RESPONDER AL CLIENTE
+                # ==================================================
 
                 send_message(
                     phone,
@@ -229,10 +320,93 @@ https://wa.me/{vendor['phone']}
 En breve se pondrá en contacto contigo."""
                 )
 
+                # ==================================================
+                # CREAR ENLACE PARA QUE EL VENDEDOR CONTACTE AL CLIENTE
+                # ==================================================
+
+                mensaje_seguimiento = (
+                    f"Hola {session['customer_name']}, "
+                    f"soy {vendor['name']} y daré seguimiento "
+                    f"a tu solicitud."
+                )
+
+                mensaje_codificado = quote(mensaje_seguimiento)
+
+                enlace_whatsapp = (
+                    f"https://wa.me/{phone}"
+                    f"?text={mensaje_codificado}"
+                )
+
+                # ==================================================
+                # MENSAJE PARA EL VENDEDOR
+                # ==================================================
+
+                mensaje_vendedor = f"""🔔 NUEVO LEAD ASIGNADO
+
+🆔 Lead:
+{lead_id}
+
+🏢 Empresa o negocio:
+{session['company_name']}
+
+👤 Cliente:
+{session['customer_name']}
+
+📱 Teléfono:
+{phone}
+
+💬 Contactar al cliente:
+{enlace_whatsapp}
+
+📧 Correo:
+{session['email']}
+
+📍 Ciudad:
+{session['city']}
+
+💰 Presupuesto:
+{session['budget']}
+
+✍️ Comentarios:
+{text}
+
+El cliente fue asignado a ti para seguimiento."""
+
+                # ==================================================
+                # NOTIFICAR AL VENDEDOR
+                # ==================================================
+
+                try:
+
+                    send_message(
+                        vendor["phone"],
+                        mensaje_vendedor
+                    )
+
+                    print(
+                        f"Notificación enviada al vendedor "
+                        f"{vendor['name']} - Lead {lead_id}"
+                    )
+
+                except Exception as error:
+
+                    print(
+                        f"Error notificando al vendedor "
+                        f"{vendor['name']}: {error}"
+                    )
+
+                # ==================================================
+                # FINALIZAR SESIÓN
+                # ==================================================
+
                 reset_session(phone)
 
                 return "ok", 200
-            # Si escribe cualquier cosa después
+
+            # ==================================================
+            # ESTADO NO RECONOCIDO
+            # ==================================================
+
             else:
 
                 companies = get_companies()
@@ -254,26 +428,34 @@ En breve se pondrá en contacto contigo."""
 
                 return "ok", 200
 
-        # ==========================================
+        # ==================================================
         # MENSAJES INTERACTIVOS
-        # ==========================================
+        # ==================================================
 
         elif message_data["type"] == "interactive":
 
-            selected_id = message_data["interactive"]["list_reply"]["id"]
-            selected_title = message_data["interactive"]["list_reply"]["title"]
+            selected_id = message_data[
+                "interactive"
+            ]["list_reply"]["id"]
+
+            selected_title = message_data[
+                "interactive"
+            ]["list_reply"]["title"]
 
             print("ID:", selected_id)
             print("TITLE:", selected_title)
 
-            # ==========================
+            # ==================================================
             # EMPRESA
-            # ==========================
+            # ==================================================
 
             if selected_id.startswith("company_"):
 
                 company_id = int(
-                    selected_id.replace("company_", "")
+                    selected_id.replace(
+                        "company_",
+                        ""
+                    )
                 )
 
                 update_company(
@@ -296,18 +478,22 @@ En breve se pondrá en contacto contigo."""
 
                 send_list(
                     phone,
-                    f"Seleccionaste {selected_title}\n\nSeleccione un servicio",
+                    f"Seleccionaste {selected_title}\n\n"
+                    "Seleccione un servicio",
                     rows
                 )
 
-            # ==========================
+            # ==================================================
             # SERVICIO
-            # ==========================
+            # ==================================================
 
             elif selected_id.startswith("service_"):
 
                 service_id = int(
-                    selected_id.replace("service_", "")
+                    selected_id.replace(
+                        "service_",
+                        ""
+                    )
                 )
 
                 update_service(
@@ -328,10 +514,14 @@ En breve se pondrá en contacto contigo."""
 
         return "ok", 200
 
-    except Exception as e:
+    except Exception as error:
 
         import traceback
+
+        print(
+            f"Error procesando webhook: {error}"
+        )
+
         traceback.print_exc()
 
         return "ok", 200
-
